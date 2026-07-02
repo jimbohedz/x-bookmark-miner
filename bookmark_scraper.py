@@ -19,6 +19,9 @@ USAGE:
   python bookmark_scraper.py --raw                -- output bookmarks_raw.md (uncategorized,
                                                      no AI key needed — feed to your Claude/Codex
                                                      for personalized categorization)
+  python bookmark_scraper.py --schedule [HH:MM]  -- install daily morning run (default 10:00)
+  python bookmark_scraper.py --unschedule         -- remove the daily schedule
+  python bookmark_scraper.py --schedule-status    -- show next scheduled run time
 
   Add --gemini to any command to enable Gemini AI categorization:
     python bookmark_scraper.py --gemini
@@ -1960,6 +1963,308 @@ def demo_mode():
 
 
 # ─────────────────────────────────────────
+#  SCHEDULING — self-installing morning run
+# ─────────────────────────────────────────
+TASK_NAME = "XBookmarkMiner"
+PLIST_LABEL = "com.xbookmarkminer.daily"
+PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{PLIST_LABEL}.plist"
+CRON_TAG = "# XBookmarkMiner"
+
+
+def _parse_hhmm(value: str) -> str:
+    """Validate and normalise a HH:MM string. Returns 'HH:MM' or raises ValueError."""
+    value = value.strip()
+    parts = value.split(":")
+    if len(parts) != 2:
+        raise ValueError(f"Time must be HH:MM, got: {value!r}")
+    h, m = parts
+    if not (h.isdigit() and m.isdigit()):
+        raise ValueError(f"Time must be digits only (HH:MM), got: {value!r}")
+    hh, mm = int(h), int(m)
+    if not (0 <= hh <= 23 and 0 <= mm <= 59):
+        raise ValueError(f"Time out of range: {hh:02d}:{mm:02d}")
+    return f"{hh:02d}:{mm:02d}"
+
+
+def _python_exe() -> str:
+    return sys.executable
+
+
+def _script_path() -> str:
+    return os.path.abspath(__file__)
+
+
+# --- Windows ---
+
+def _schtasks_create(hhmm: str) -> None:
+    import subprocess
+    py = _python_exe()
+    script = _script_path()
+    cmd = [
+        "schtasks", "/create",
+        "/tn", TASK_NAME,
+        "/tr", f'"{py}" "{script}" --raw',
+        "/sc", "DAILY",
+        "/st", hhmm,
+        "/f",
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or result.stdout.strip())
+
+
+def _schtasks_delete() -> None:
+    import subprocess
+    cmd = ["schtasks", "/delete", "/tn", TASK_NAME, "/f"]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        stderr = result.stderr.strip()
+        if "cannot find" in stderr.lower() or "does not exist" in stderr.lower():
+            raise LookupError("Task not found.")
+        raise RuntimeError(stderr or result.stdout.strip())
+
+
+def _schtasks_query() -> str:
+    import subprocess
+    cmd = ["schtasks", "/query", "/tn", TASK_NAME, "/fo", "LIST"]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        return ""
+    return result.stdout.strip()
+
+
+# --- macOS launchd ---
+
+def _launchd_plist_xml(hhmm: str) -> str:
+    h, m = hhmm.split(":")
+    py = _python_exe()
+    script = _script_path()
+    script_dir = str(Path(script).parent)
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"'
+        ' "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+        '<plist version="1.0">\n'
+        '<dict>\n'
+        f'  <key>Label</key><string>{PLIST_LABEL}</string>\n'
+        '  <key>ProgramArguments</key>\n'
+        '  <array>\n'
+        f'    <string>{py}</string>\n'
+        f'    <string>{script}</string>\n'
+        '    <string>--raw</string>\n'
+        '  </array>\n'
+        '  <key>StartCalendarInterval</key>\n'
+        '  <dict>\n'
+        f'    <key>Hour</key><integer>{int(h)}</integer>\n'
+        f'    <key>Minute</key><integer>{int(m)}</integer>\n'
+        '  </dict>\n'
+        '  <key>WorkingDirectory</key>'
+        f'<string>{script_dir}</string>\n'
+        '</dict>\n'
+        '</plist>\n'
+    )
+
+
+def _launchd_install(hhmm: str) -> None:
+    import subprocess
+    PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
+    # Unload first if already loaded (ignore errors)
+    subprocess.run(["launchctl", "unload", str(PLIST_PATH)], capture_output=True)
+    PLIST_PATH.write_text(_launchd_plist_xml(hhmm), encoding="utf-8")
+    result = subprocess.run(["launchctl", "load", str(PLIST_PATH)], capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or result.stdout.strip())
+
+
+def _launchd_uninstall() -> None:
+    import subprocess
+    if not PLIST_PATH.exists():
+        raise LookupError("Plist not found — not scheduled.")
+    subprocess.run(["launchctl", "unload", str(PLIST_PATH)], capture_output=True)
+    PLIST_PATH.unlink()
+
+
+def _launchd_status() -> str:
+    import subprocess
+    if not PLIST_PATH.exists():
+        return ""
+    result = subprocess.run(
+        ["launchctl", "list", PLIST_LABEL], capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        return f"Plist exists at {PLIST_PATH} but launchctl reports it is not loaded."
+    return result.stdout.strip()
+
+
+# --- Linux/macOS crontab ---
+
+def _crontab_line(hhmm: str) -> str:
+    h, m = hhmm.split(":")
+    py = _python_exe()
+    script = _script_path()
+    return f"{int(m)} {int(h)} * * * \"{py}\" \"{script}\" --raw {CRON_TAG}"
+
+
+def _read_crontab() -> str:
+    import subprocess
+    result = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
+    if result.returncode != 0:
+        return ""
+    return result.stdout
+
+
+def _write_crontab(content: str) -> None:
+    import subprocess
+    proc = subprocess.run(["crontab", "-"], input=content, capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr.strip() or proc.stdout.strip())
+
+
+def _crontab_install(hhmm: str) -> None:
+    existing = _read_crontab()
+    # Remove any existing XBookmarkMiner line (idempotent)
+    lines = [ln for ln in existing.splitlines() if CRON_TAG not in ln]
+    lines.append(_crontab_line(hhmm))
+    _write_crontab("\n".join(lines) + "\n")
+
+
+def _crontab_uninstall() -> None:
+    existing = _read_crontab()
+    filtered = [ln for ln in existing.splitlines() if CRON_TAG not in ln]
+    if len(filtered) == len(existing.splitlines()):
+        raise LookupError("No XBookmarkMiner cron entry found.")
+    _write_crontab("\n".join(filtered) + "\n")
+
+
+def _crontab_status() -> str:
+    existing = _read_crontab()
+    for ln in existing.splitlines():
+        if CRON_TAG in ln:
+            return ln
+    return ""
+
+
+# --- Public schedule commands ---
+
+def cmd_schedule(hhmm: str) -> None:
+    """Install the daily scheduled task/job for this machine."""
+    if sys.platform == "win32":
+        try:
+            _schtasks_create(hhmm)
+            print(f"[schedule] Daily task created: runs at {hhmm} every morning.")
+            print(f"[schedule] Task name: {TASK_NAME}")
+            print(f"[schedule] Script: {_script_path()}")
+            print(f"[schedule] Run: --raw  (refreshes bookmarks_raw.md)")
+            print(f"[schedule] To remove: py bookmark_scraper.py --unschedule")
+        except Exception as e:
+            print(f"[schedule] Failed to create task: {e}")
+            print("[schedule] You can create it manually via Task Scheduler.")
+            print(f"  Program: {_python_exe()}")
+            print(f"  Arguments: \"{_script_path()}\" --raw")
+    elif sys.platform == "darwin":
+        try:
+            _launchd_install(hhmm)
+            print(f"[schedule] LaunchAgent installed: runs at {hhmm} every morning.")
+            print(f"[schedule] Plist: {PLIST_PATH}")
+            print(f"[schedule] To remove: python bookmark_scraper.py --unschedule")
+        except Exception as e:
+            print(f"[schedule] Failed to install LaunchAgent: {e}")
+            print("[schedule] Manual cron fallback:")
+            print(f"  Add to crontab:  {_crontab_line(hhmm)}")
+    else:
+        # Linux: try crontab, fall back to printing the line
+        try:
+            _crontab_install(hhmm)
+            print(f"[schedule] Cron job installed: runs at {hhmm} every morning.")
+            print(f"[schedule] Tag: {CRON_TAG}")
+            print(f"[schedule] To remove: python bookmark_scraper.py --unschedule")
+        except LookupError:
+            # crontab -l returned non-zero (no existing crontab) — print manual line
+            line = _crontab_line(hhmm)
+            print("[schedule] Could not write crontab automatically.")
+            print("[schedule] Add this line manually with: crontab -e")
+            print(f"  {line}")
+        except Exception as e:
+            print(f"[schedule] Failed to write crontab: {e}")
+            print("[schedule] Add this line manually with: crontab -e")
+            print(f"  {_crontab_line(hhmm)}")
+
+
+def cmd_unschedule() -> None:
+    """Remove the daily scheduled task/job."""
+    if sys.platform == "win32":
+        try:
+            _schtasks_delete()
+            print(f"[unschedule] Task '{TASK_NAME}' removed.")
+        except LookupError:
+            print(f"[unschedule] No task named '{TASK_NAME}' found. Nothing to remove.")
+        except Exception as e:
+            print(f"[unschedule] Failed to remove task: {e}")
+    elif sys.platform == "darwin":
+        try:
+            _launchd_uninstall()
+            print(f"[unschedule] LaunchAgent '{PLIST_LABEL}' removed.")
+        except LookupError:
+            # Try crontab fallback
+            try:
+                _crontab_uninstall()
+                print("[unschedule] Cron entry removed.")
+            except LookupError:
+                print("[unschedule] No scheduled task found (checked launchd and crontab).")
+        except Exception as e:
+            print(f"[unschedule] Failed: {e}")
+    else:
+        try:
+            _crontab_uninstall()
+            print("[unschedule] Cron entry removed.")
+        except LookupError:
+            print("[unschedule] No XBookmarkMiner cron entry found. Nothing to remove.")
+        except Exception as e:
+            print(f"[unschedule] Failed to update crontab: {e}")
+
+
+def cmd_schedule_status() -> None:
+    """Print current schedule status."""
+    if sys.platform == "win32":
+        info = _schtasks_query()
+        if not info:
+            print(f"[schedule-status] Not scheduled (no task named '{TASK_NAME}').")
+            print("[schedule-status] Run: py bookmark_scraper.py --schedule 10:00")
+            return
+        # Extract Next Run Time line for a clean one-liner
+        next_run = ""
+        for ln in info.splitlines():
+            if "Next Run Time" in ln or "Next Run" in ln:
+                next_run = ln.strip()
+                break
+        print(f"[schedule-status] Task '{TASK_NAME}' is scheduled.")
+        if next_run:
+            print(f"[schedule-status] {next_run}")
+        else:
+            print(info)
+    elif sys.platform == "darwin":
+        status = _launchd_status()
+        if status:
+            print(f"[schedule-status] LaunchAgent '{PLIST_LABEL}' is active.")
+            print(status)
+        else:
+            # Check crontab fallback
+            ct = _crontab_status()
+            if ct:
+                print(f"[schedule-status] Cron entry found: {ct}")
+            else:
+                print(f"[schedule-status] Not scheduled.")
+                print("[schedule-status] Run: python bookmark_scraper.py --schedule 10:00")
+    else:
+        ct = _crontab_status()
+        if ct:
+            print(f"[schedule-status] Cron entry: {ct}")
+        else:
+            print("[schedule-status] Not scheduled.")
+            print("[schedule-status] Run: python bookmark_scraper.py --schedule 10:00")
+
+
+# ─────────────────────────────────────────
 #  ENTRY POINT
 # ─────────────────────────────────────────
 def main():
@@ -2009,10 +2314,47 @@ Add --debug for verbose output.
     parser.add_argument("--debug", action="store_true", help="Verbose debug output")
     parser.add_argument("--demo", action="store_true",
                         help="Run in demo mode without X cookies (shows example output)")
+    parser.add_argument(
+        "--schedule",
+        metavar="HH:MM",
+        nargs="?",
+        const="10:00",
+        help="Install a daily morning run (default 10:00 if no time given). "
+             "Example: --schedule 07:30",
+    )
+    parser.add_argument(
+        "--unschedule",
+        action="store_true",
+        help="Remove the previously installed daily schedule",
+    )
+    parser.add_argument(
+        "--schedule-status",
+        action="store_true",
+        dest="schedule_status",
+        help="Show whether a daily schedule is active and when it next runs",
+    )
 
     args = parser.parse_args()
     global DEBUG
     DEBUG = args.debug
+
+    # ── Scheduling commands (no cookies/progress file needed) ──
+    if args.schedule_status:
+        cmd_schedule_status()
+        return
+
+    if args.unschedule:
+        cmd_unschedule()
+        return
+
+    if args.schedule is not None:
+        try:
+            hhmm = _parse_hhmm(args.schedule)
+        except ValueError as e:
+            print(f"[schedule] Invalid time: {e}")
+            return
+        cmd_schedule(hhmm)
+        return
 
     if args.demo:
         demo_mode()

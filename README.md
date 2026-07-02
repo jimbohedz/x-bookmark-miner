@@ -209,6 +209,11 @@ python bookmark_scraper.py --search "query"     # Semantic search by meaning
 python bookmark_scraper.py --gemini             # Scrape + Gemini categorization
 python bookmark_scraper.py --rebuild --gemini   # Rebuild with full Gemini re-categorization
 python bookmark_scraper.py --fix-unsure         # Re-categorize low-confidence entries only
+
+# Daily automation (self-installing)
+python bookmark_scraper.py --schedule 10:00     # Install daily run at 10:00 AM
+python bookmark_scraper.py --schedule-status    # Show next scheduled run
+python bookmark_scraper.py --unschedule         # Remove the daily schedule
 ```
 
 ### Flag reference
@@ -229,6 +234,9 @@ python bookmark_scraper.py --fix-unsure         # Re-categorize low-confidence e
 | `--demo` | nothing | demo_output.md | Safe preview, no cookies |
 | `--reset` | — | — | Clears progress, starts fresh |
 | `--debug` | — | — | Verbose output, add to any command |
+| `--schedule [HH:MM]` | — | — | Install daily run (default 10:00). No admin needed. |
+| `--schedule-status` | — | terminal | Show next scheduled run time |
+| `--unschedule` | — | — | Remove the daily schedule |
 
 ---
 
@@ -236,32 +244,53 @@ python bookmark_scraper.py --fix-unsure         # Re-categorize low-confidence e
 
 The core use case: doomscroll at night, bookmarks appear as a knowledge base every morning.
 
-Set up a daily run so your bookmark digest refreshes automatically.
+**One command installs the daily automation on any platform:**
 
-**Windows — Task Scheduler (GUI)**
-1. Open Task Scheduler → Create Basic Task
+```bash
+py bookmark_scraper.py --schedule 10:00
+```
+
+That's it. The script registers itself as a scheduled task (Windows), LaunchAgent (macOS), or cron job (Linux) using the exact Python interpreter it is running under. No admin rights needed. No Task Scheduler GUI. No editing plist files.
+
+```bash
+# Check when it next runs
+py bookmark_scraper.py --schedule-status
+
+# Change the time (re-run --schedule with a new time — idempotent)
+py bookmark_scraper.py --schedule 07:30
+
+# Remove the schedule
+py bookmark_scraper.py --unschedule
+```
+
+> Note: `--raw` requires an existing scrape (`bookmarks_progress.json`). Run the default scrape at least once first. After that, the scheduled run refreshes from your latest saved data — it's instant.
+
+**Manual fallback (if the one-liner doesn't work for you)**
+
+<details>
+<summary>Windows — Task Scheduler GUI</summary>
+
+1. Open Task Scheduler -> Create Basic Task
 2. Name: "Bookmark Miner"
-3. Trigger: Daily, 6:00 AM
+3. Trigger: Daily, 10:00 AM
 4. Action: Start a program
-   - Program: `C:\Python311\python.exe` (find yours: run `where python` or `where py`)
+   - Program: `C:\Python311\python.exe` (find yours: run `where py`)
    - Arguments: `bookmark_scraper.py --raw`
    - Start in: `C:\path\to\x-bookmark-miner`
 5. Finish.
 
-**Windows — schtasks (one command, run as admin):**
-```cmd
-schtasks /create /tn "BookmarkMiner" /tr "py C:\path\to\x-bookmark-miner\bookmark_scraper.py --raw" /sc daily /st 06:00
-```
+</details>
 
-**macOS — launchd**
+<details>
+<summary>macOS — launchd plist (manual)</summary>
 
-Create `~/Library/LaunchAgents/com.bookmark-miner.plist`:
+Create `~/Library/LaunchAgents/com.xbookmarkminer.daily.plist`:
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>com.bookmark-miner</string>
+  <key>Label</key><string>com.xbookmarkminer.daily</string>
   <key>ProgramArguments</key>
   <array>
     <string>/usr/bin/python3</string>
@@ -269,21 +298,25 @@ Create `~/Library/LaunchAgents/com.bookmark-miner.plist`:
     <string>--raw</string>
   </array>
   <key>StartCalendarInterval</key>
-  <dict><key>Hour</key><integer>6</integer><key>Minute</key><integer>0</integer></dict>
+  <dict><key>Hour</key><integer>10</integer><key>Minute</key><integer>0</integer></dict>
   <key>WorkingDirectory</key><string>/path/to/x-bookmark-miner</string>
 </dict>
 </plist>
 ```
-Then: `launchctl load ~/Library/LaunchAgents/com.bookmark-miner.plist`
+Then: `launchctl load ~/Library/LaunchAgents/com.xbookmarkminer.daily.plist`
 
-**Linux — cron**
+</details>
+
+<details>
+<summary>Linux — cron (manual)</summary>
+
 ```bash
 crontab -e
-# Add this line (runs at 6am daily):
-0 6 * * * cd /path/to/x-bookmark-miner && python3 bookmark_scraper.py --raw
+# Add this line (runs at 10am daily):
+0 10 * * * /path/to/python3 /path/to/bookmark_scraper.py --raw # XBookmarkMiner
 ```
 
-> Note: `--raw` requires an existing scrape (`bookmarks_progress.json`). Run the default scrape at least once first. After that, `--raw` just refreshes from your latest saved data — it's instant.
+</details>
 
 ---
 
