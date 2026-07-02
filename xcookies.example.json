@@ -1,6 +1,6 @@
 [
   {
-    "_comment": "This is the expected format. Export real cookies from Chrome using the Cookie-Editor extension.",
+    "_comment": "Export ALL cookies from Cookie-Editor (keep all ~30 entries, not just these 3). The scraper picks what it needs. This file only shows the 3 most important ones for reference.",
     "name": "auth_token",
     "value": "YOUR_AUTH_TOKEN_HERE",
     "domain": ".x.com",

@@ -38,6 +38,11 @@ python bookmark_scraper.py --raw
 This outputs `bookmarks_raw.md` — all scraped bookmarks, uncategorized, ready for the agent.
 No Gemini key needed.
 
+> **Note:** The commands above assume `bookmark_scraper.py` is in your current working directory.
+> If you installed it elsewhere, either set `output_path` in `config.yaml` to an absolute path
+> (e.g. `/home/you/bookmarks_raw.md`) so the output lands in a predictable location, or run the
+> script by full path: `python /path/to/x-bookmark-miner/bookmark_scraper.py --raw`.
+
 ---
 
 ## Step 2 — Read the user's profile

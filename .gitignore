@@ -5,6 +5,8 @@ xcookies.json
 
 # Output files (user's personal data)
 bookmarks_output.md
+bookmarks_raw.md
+FOR_YOU.md
 bookmarks_progress.json
 bookmarks_embeddings.json
 demo_output.md

@@ -30,7 +30,7 @@ USAGE:
 SETUP:
   1. Copy config.example.yaml to config.yaml and edit it.
   2. Export your X cookies to the path set in config.yaml (default: xcookies.json).
-  3. pip install -r requirements.txt
+  3. pip install requests   (or: pip install -r requirements.txt -- same thing)
   4. python bookmark_scraper.py
 """
 
@@ -593,10 +593,10 @@ def transcribe_x_video(tweet_url: str, whisper_model=None) -> tuple:
         cookies_txt = None
         if COOKIES_JSON.exists():
             try:
-                with open(COOKIES_JSON, "r") as f:
+                with open(COOKIES_JSON, "r", encoding="utf-8") as f:
                     cj = json.load(f)
                 cookies_txt = os.path.join(tmp_dir, "bm_ytdlp_cookies.txt")
-                with open(cookies_txt, "w") as cf:
+                with open(cookies_txt, "w", encoding="utf-8") as cf:
                     cf.write("# Netscape HTTP Cookie File\n")
                     for c in cj:
                         domain = c.get("domain", ".x.com")
@@ -720,10 +720,17 @@ def fetch_article(url: str) -> tuple:
 # ─────────────────────────────────────────
 def load_progress() -> dict:
     if PROGRESS_FILE.exists():
-        with open(PROGRESS_FILE, encoding="utf-8") as f:
-            data = json.load(f)
-        print(f"[resume] {len(data['entries'])} entries saved — continuing.\n")
-        return data
+        try:
+            with open(PROGRESS_FILE, encoding="utf-8") as f:
+                data = json.load(f)
+            if "entries" not in data:
+                raise ValueError("missing 'entries' key")
+            print(f"[resume] {len(data['entries'])} entries saved — continuing.\n")
+            return data
+        except (json.JSONDecodeError, ValueError) as e:
+            print(f"[ERROR] Progress file is corrupt or wrong format: {e}")
+            print(f"[ERROR] Run with --reset to start fresh, or delete {PROGRESS_FILE} manually.")
+            sys.exit(1)
     return {"processed_ids": [], "entries": [], "cursor": None}
 
 
@@ -1007,6 +1014,7 @@ def get_user_id(session: requests.Session) -> str:
     r = session.get(
         "https://api.x.com/1.1/account/verify_credentials.json",
         params={"skip_status": "true", "include_entities": "false"},
+        timeout=30,
     )
     if r.status_code == 200:
         return str(r.json()["id"])
@@ -1359,6 +1367,7 @@ def scrape(session, query_id, user_id, progress, tweetdetail_qid=None) -> list:
         r = session.get(
             f"https://x.com/i/api/graphql/{query_id}/Bookmarks",
             params={"variables": json.dumps(variables), "features": json.dumps(FEATURES)},
+            timeout=30,
         )
 
         if r.status_code == 429:
@@ -1523,7 +1532,7 @@ def rescrape_replies(session, tweetdetail_qid: str, progress: dict) -> tuple:
     print("\n[rescrape-replies] Scanning for entries without author replies...\n")
 
     for i, entry in enumerate(entries):
-        if "author_replies" in entry:
+        if entry.get("author_replies"):
             continue
         tweet_id = entry.get("id", "")
         author = entry.get("author", "")
@@ -1995,7 +2004,7 @@ Add --debug for verbose output.
                         help="Semantic search bookmarks by meaning")
     parser.add_argument("--gemini", action="store_true", help="Enable Gemini AI categorization")
     parser.add_argument("--raw", action="store_true",
-                        help="Output uncategorized markdown (bookmarks_raw.md) — no Gemini key needed. "
+                        help="Output uncategorized markdown (bookmarks_raw.md) - no Gemini key needed. "
                              "Ideal for agent-native workflows: your Claude/Codex categorizes against your own profile.")
     parser.add_argument("--debug", action="store_true", help="Verbose debug output")
     parser.add_argument("--demo", action="store_true",

@@ -38,17 +38,22 @@ The agent-native workflow skips the AI categorization step entirely. Instead, yo
 
 **1. Clone and scrape:**
 ```bash
-git clone https://github.com/[REPO_URL]/x-bookmark-miner.git
+git clone https://github.com/jimbohedz/x-bookmark-miner.git
 cd x-bookmark-miner
 pip install requests
 # export cookies → xcookies.json (see Quickstart)
-python bookmark_scraper.py        # scrape your bookmarks
-python bookmark_scraper.py --raw  # write bookmarks_raw.md (uncategorized, agent-ready)
+python bookmark_scraper.py        # Run this first — scrapes your bookmarks
+python bookmark_scraper.py --raw  # Then run this — writes bookmarks_raw.md (uncategorized, agent-ready)
 ```
+
+> **Windows users:** use `py` instead of `python` (e.g. `py bookmark_scraper.py`)
 
 **2. Copy the skill to your Claude Code setup:**
 ```bash
+# macOS/Linux:
 cp -r .claude/skills/bookmark-miner ~/.claude/skills/
+# Windows (Command Prompt):
+xcopy /E /I .claude\skills\bookmark-miner %USERPROFILE%\.claude\skills\bookmark-miner
 ```
 Or paste `AGENTS_SNIPPET.md` into your `AGENTS.md` for Codex.
 
@@ -211,8 +216,9 @@ python bookmark_scraper.py --fix-unsure         # Re-categorize low-confidence e
 | Flag | Requires | Output | Notes |
 |---|---|---|---|
 | *(none)* | xcookies.json | bookmarks_output.md | Scrape / resume |
-| `--raw` | existing scrape | bookmarks_raw.md | Uncategorized, agent-native |
+| `--raw` | existing scrape | bookmarks_raw.md | Uncategorized, agent-native. Run default scrape first. |
 | `--rebuild` | existing scrape | bookmarks_output.md | Instant rebuild from saved data |
+| `--view` | GEMINI_API_KEY | bookmarks_output.md | Shortcut for --rebuild --gemini |
 | `--gemini` | GEMINI_API_KEY | bookmarks_output.md | AI categorization via Gemini |
 | `--fix-unsure` | GEMINI_API_KEY | bookmarks_output.md | Re-categorize low-confidence only |
 | `--rescrape-articles` | existing scrape | updates progress | Re-fetch empty article links |
@@ -223,6 +229,61 @@ python bookmark_scraper.py --fix-unsure         # Re-categorize low-confidence e
 | `--demo` | nothing | demo_output.md | Safe preview, no cookies |
 | `--reset` | — | — | Clears progress, starts fresh |
 | `--debug` | — | — | Verbose output, add to any command |
+
+---
+
+## Run it every morning
+
+The core use case: doomscroll at night, bookmarks appear as a knowledge base every morning.
+
+Set up a daily run so your bookmark digest refreshes automatically.
+
+**Windows — Task Scheduler (GUI)**
+1. Open Task Scheduler → Create Basic Task
+2. Name: "Bookmark Miner"
+3. Trigger: Daily, 6:00 AM
+4. Action: Start a program
+   - Program: `C:\Python311\python.exe` (find yours: run `where python` or `where py`)
+   - Arguments: `bookmark_scraper.py --raw`
+   - Start in: `C:\path\to\x-bookmark-miner`
+5. Finish.
+
+**Windows — schtasks (one command, run as admin):**
+```cmd
+schtasks /create /tn "BookmarkMiner" /tr "py C:\path\to\x-bookmark-miner\bookmark_scraper.py --raw" /sc daily /st 06:00
+```
+
+**macOS — launchd**
+
+Create `~/Library/LaunchAgents/com.bookmark-miner.plist`:
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.bookmark-miner</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/path/to/x-bookmark-miner/bookmark_scraper.py</string>
+    <string>--raw</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>6</integer><key>Minute</key><integer>0</integer></dict>
+  <key>WorkingDirectory</key><string>/path/to/x-bookmark-miner</string>
+</dict>
+</plist>
+```
+Then: `launchctl load ~/Library/LaunchAgents/com.bookmark-miner.plist`
+
+**Linux — cron**
+```bash
+crontab -e
+# Add this line (runs at 6am daily):
+0 6 * * * cd /path/to/x-bookmark-miner && python3 bookmark_scraper.py --raw
+```
+
+> Note: `--raw` requires an existing scrape (`bookmarks_progress.json`). Run the default scrape at least once first. After that, `--raw` just refreshes from your latest saved data — it's instant.
 
 ---
 
@@ -290,7 +351,12 @@ Get a free key at [aistudio.google.com](https://aistudio.google.com/) and set it
 
 ```bash
 # Option A — environment variable
+# macOS/Linux:
 export GEMINI_API_KEY=your_key_here
+# Windows (Command Prompt):
+set GEMINI_API_KEY=your_key_here
+# Windows (PowerShell):
+$env:GEMINI_API_KEY="your_key_here"
 
 # Option B — .env file (copy .env.example to .env)
 GEMINI_API_KEY=your_key_here
