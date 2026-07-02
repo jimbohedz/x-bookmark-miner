@@ -1,0 +1,27 @@
+[
+  {
+    "_comment": "This is the expected format. Export real cookies from Chrome using the Cookie-Editor extension.",
+    "name": "auth_token",
+    "value": "YOUR_AUTH_TOKEN_HERE",
+    "domain": ".x.com",
+    "path": "/",
+    "secure": true,
+    "expirationDate": 1999999999
+  },
+  {
+    "name": "ct0",
+    "value": "YOUR_CT0_CSRF_TOKEN_HERE",
+    "domain": ".x.com",
+    "path": "/",
+    "secure": true,
+    "expirationDate": 1999999999
+  },
+  {
+    "name": "twid",
+    "value": "u%3DYOUR_USER_ID",
+    "domain": ".x.com",
+    "path": "/",
+    "secure": true,
+    "expirationDate": 1999999999
+  }
+]

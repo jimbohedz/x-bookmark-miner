@@ -1,0 +1,34 @@
+# Sensitive — never commit these
+xcookies.json
+.env
+.env.local
+
+# Output files (user's personal data)
+bookmarks_output.md
+bookmarks_progress.json
+bookmarks_embeddings.json
+demo_output.md
+config.yaml
+
+# Temp files from video transcription
+bm_audio_*
+bm_ytdlp_cookies.txt
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# OS
+.DS_Store
+Thumbs.db
+LAUNCH_THREAD.md
+LAUNCH_CHECKLIST.md

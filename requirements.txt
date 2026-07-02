@@ -1,0 +1,57 @@
+# x-bookmark-miner — requirements
+# ─────────────────────────────────────────────────────────────────────────────
+# CORE (required — minimal scraper works with just these)
+requests>=2.28
+
+# ─────────────────────────────────────────────────────────────────────────────
+# OPTIONAL — install only what you need
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Config file support (YAML)
+# pip install pyyaml
+# pyyaml>=6.0
+
+# Auto-read cookies directly from Chrome (skip manual export)
+# pip install browser-cookie3
+# browser-cookie3>=0.19
+
+# Cleaner article text extraction from linked URLs
+# pip install trafilatura
+# trafilatura>=1.6
+
+# Scraping JS-rendered pages (X native articles, paywalled pages)
+# pip install playwright && playwright install chromium
+# playwright>=1.40
+
+# YouTube transcript extraction
+# pip install youtube-transcript-api
+# youtube-transcript-api>=0.6
+
+# X native video transcription (GPU recommended; CPU fallback supported)
+# pip install faster-whisper yt-dlp imageio-ffmpeg
+# faster-whisper>=1.0
+# yt-dlp>=2024.1
+# imageio-ffmpeg>=0.4
+
+# AI categorization via Gemini (free tier available)
+# pip install google-generativeai   [optional — not needed, script calls REST API directly]
+# Set GEMINI_API_KEY environment variable or add to .env file
+
+# Semantic search via Ollama (runs locally — free, private)
+# Install Ollama: https://ollama.com
+# Pull the embed model: ollama pull nomic-embed-text
+# Pull a vision model: ollama pull gemma3:12b
+
+# ─────────────────────────────────────────────────────────────────────────────
+# QUICK INSTALL BUNDLES
+# ─────────────────────────────────────────────────────────────────────────────
+# Minimal:
+#   pip install requests pyyaml
+#
+# Article extraction:
+#   pip install requests pyyaml trafilatura playwright
+#   playwright install chromium
+#
+# Full (everything including video transcription):
+#   pip install requests pyyaml trafilatura playwright browser-cookie3 youtube-transcript-api faster-whisper yt-dlp imageio-ffmpeg
+#   playwright install chromium

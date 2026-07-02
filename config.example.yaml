@@ -1,0 +1,61 @@
+# x-bookmark-miner configuration
+# ─────────────────────────────────────────────────────────────────────────────
+# Copy this file to config.yaml and edit it.
+# All fields are optional — leave as-is to use the defaults.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Path to your X/Twitter session cookies (Cookie-Editor JSON export format)
+# Default: xcookies.json (next to the script)
+cookies_path: xcookies.json
+
+# Where to write the output Markdown knowledge base
+# Default: bookmarks_output.md
+output_path: bookmarks_output.md
+
+# Where to save scraping progress (enables incremental resume)
+# Default: bookmarks_progress.json
+progress_path: bookmarks_progress.json
+
+# Gemini model for AI categorization (optional feature — needs GEMINI_API_KEY)
+# Get a free key at: https://aistudio.google.com/
+gemini_model: gemini-2.0-flash
+
+# Whisper model for X native video transcription
+# Options: tiny, base, small, medium, large-v3
+# Smaller = faster but less accurate. medium is a good balance.
+whisper_model: medium
+
+# Whisper device: "auto" (detects GPU/CPU), "cuda" (GPU), "cpu"
+# CPU works fine but is slower — medium model on CPU takes ~5-10x longer
+whisper_device: auto
+
+# Ollama server URL for vision analysis and semantic search
+# Install Ollama from: https://ollama.com
+ollama_url: http://localhost:11434
+
+# Vision model for image analysis (requires Ollama)
+# Run: ollama pull gemma3:12b
+vision_model: gemma3:12b
+
+# Polite delay between X API calls (seconds). Don't go below 1.0.
+delay_seconds: 1.5
+
+# Maximum number of bookmarks to scrape (9999 = effectively unlimited)
+max_bookmarks: 9999
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CUSTOM CATEGORIES (optional)
+# ─────────────────────────────────────────────────────────────────────────────
+# If not set here, the built-in default categories are used.
+# You can also put custom categories in a categories.json file next to the script.
+#
+# Format: each category is a list of keywords to match (case-insensitive).
+# The category with the most keyword hits wins.
+#
+# categories:
+#   "My Research":
+#     - "topic one"
+#     - "topic two"
+#   "Work Projects":
+#     - "work keyword"
+#     - "project name"

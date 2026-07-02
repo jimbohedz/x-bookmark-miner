@@ -1,0 +1,38 @@
+{
+  "_comment": "Copy to categories.json and customize. Each category maps to a list of keywords (case-insensitive substring match).",
+  "AI Tools & Prompts": [
+    "chatgpt", "gpt-4", "openai", "claude", "anthropic",
+    "prompt engineer", " llm ", "midjourney", "stable diffusion",
+    "ai agent", "ai tool", "ai workflow", "agentic", "mcp ",
+    "token efficiency", "context window", "claude code"
+  ],
+  "Trading/Crypto": [
+    "trading", "crypto ", "bitcoin", " btc", " eth ", "ethereum",
+    "altcoin", "technical analysis", "futures", "leverage",
+    "memecoin", "pump ", "whale ", "bullish", "bearish",
+    "stop loss", "breakout", "binance", "bybit", "degen", "100x"
+  ],
+  "Content Creation": [
+    "tiktok", "content creat", "viral", "video edit", "youtube",
+    "instagram", "reels", "trending", "hook ", "caption",
+    "faceless", "ugc", "shorts", "thumbnail", "algorithm",
+    "personal brand", "social media", "content strategy"
+  ],
+  "Dev/Automation": [
+    "api key", " bot ", "webhook", "telegram bot", " script",
+    "automat", "deploy", " server", "monitor", "rate limit",
+    " python ", "node.js", "fastapi", "docker", "cron job",
+    "scheduler", "rest api", "async "
+  ],
+  "Mindset": [
+    "mindset", "limiting belief", "subconscious", "manifestation",
+    "discipline", "stoic", "psychology", "self-help",
+    "personal growth", "growth mindset", "confidence", "neuroplast"
+  ],
+  "Money/Finance": [
+    "passive income", "side hustle", "make money", "financial freedom",
+    "wealth build", "personal finance", "invest", "millionaire",
+    "revenue", "profit", "business model", "freelanc",
+    "money online", "online business", "digital product"
+  ]
+}
