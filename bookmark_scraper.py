@@ -19,6 +19,9 @@ USAGE:
   python bookmark_scraper.py --raw                -- output bookmarks_raw.md (uncategorized,
                                                      no AI key needed — feed to your Claude/Codex
                                                      for personalized categorization)
+  python bookmark_scraper.py --morning             -- scrape new bookmarks then refresh
+                                                     bookmarks_raw.md (designed for scheduled
+                                                     runs — one flag does both jobs)
   python bookmark_scraper.py --schedule [HH:MM]  -- install daily morning run (default 10:00)
   python bookmark_scraper.py --unschedule         -- remove the daily schedule
   python bookmark_scraper.py --schedule-status    -- show next scheduled run time
@@ -2003,7 +2006,7 @@ def _schtasks_create(hhmm: str) -> None:
     cmd = [
         "schtasks", "/create",
         "/tn", TASK_NAME,
-        "/tr", f'"{py}" "{script}" --raw',
+        "/tr", f'"{py}" "{script}" --morning',
         "/sc", "DAILY",
         "/st", hhmm,
         "/f",
@@ -2051,7 +2054,7 @@ def _launchd_plist_xml(hhmm: str) -> str:
         '  <array>\n'
         f'    <string>{py}</string>\n'
         f'    <string>{script}</string>\n'
-        '    <string>--raw</string>\n'
+        '    <string>--morning</string>\n'
         '  </array>\n'
         '  <key>StartCalendarInterval</key>\n'
         '  <dict>\n'
@@ -2102,7 +2105,7 @@ def _crontab_line(hhmm: str) -> str:
     h, m = hhmm.split(":")
     py = _python_exe()
     script = _script_path()
-    return f"{int(m)} {int(h)} * * * \"{py}\" \"{script}\" --raw {CRON_TAG}"
+    return f"{int(m)} {int(h)} * * * \"{py}\" \"{script}\" --morning {CRON_TAG}"
 
 
 def _read_crontab() -> str:
@@ -2154,13 +2157,13 @@ def cmd_schedule(hhmm: str) -> None:
             print(f"[schedule] Daily task created: runs at {hhmm} every morning.")
             print(f"[schedule] Task name: {TASK_NAME}")
             print(f"[schedule] Script: {_script_path()}")
-            print(f"[schedule] Run: --raw  (refreshes bookmarks_raw.md)")
+            print(f"[schedule] Run: --morning  (scrapes new bookmarks, then refreshes bookmarks_raw.md)")
             print(f"[schedule] To remove: py bookmark_scraper.py --unschedule")
         except Exception as e:
             print(f"[schedule] Failed to create task: {e}")
             print("[schedule] You can create it manually via Task Scheduler.")
             print(f"  Program: {_python_exe()}")
-            print(f"  Arguments: \"{_script_path()}\" --raw")
+            print(f"  Arguments: \"{_script_path()}\" --morning")
     elif sys.platform == "darwin":
         try:
             _launchd_install(hhmm)
@@ -2286,6 +2289,7 @@ Examples:
   python bookmark_scraper.py --vision            Analyze images via local Ollama model
   python bookmark_scraper.py --search "query"    Semantic search your bookmarks
   python bookmark_scraper.py --raw               Output bookmarks_raw.md (no AI key, agent-native)
+  python bookmark_scraper.py --morning           Scrape + refresh bookmarks_raw.md (for scheduled runs)
   python bookmark_scraper.py --demo              Run without cookies, see example output
 
 Add --gemini to enable Gemini AI categorization (set GEMINI_API_KEY env var).
@@ -2333,6 +2337,14 @@ Add --debug for verbose output.
         dest="schedule_status",
         help="Show whether a daily schedule is active and when it next runs",
     )
+    parser.add_argument(
+        "--morning",
+        action="store_true",
+        help="Scrape new bookmarks (same as running with no flags), then regenerate "
+             "bookmarks_raw.md. Designed for scheduled runs — one flag does both jobs. "
+             "On cookie error: prints a clean message and exits. "
+             "On mid-scrape network failure: still attempts raw regeneration from saved progress.",
+    )
 
     args = parser.parse_args()
     global DEBUG
@@ -2354,6 +2366,59 @@ Add --debug for verbose output.
             print(f"[schedule] Invalid time: {e}")
             return
         cmd_schedule(hhmm)
+        return
+
+    if args.morning:
+        # --morning: full scrape + raw regeneration, designed for scheduled runs.
+        # Step 1: scrape (same path as default run, no flags).
+        # Step 2: always regenerate bookmarks_raw.md from whatever progress exists.
+        print("=" * 58)
+        print("  x-bookmark-miner  (morning run)")
+        print("  Scraping new bookmarks, then refreshing bookmarks_raw.md")
+        print("=" * 58)
+        print()
+        # Load any existing progress so raw can still run even if scrape fails.
+        morning_progress = load_progress()
+        scrape_ok = False
+        try:
+            session = build_session()
+        except SystemExit:
+            # build_session() calls sys.exit(1) on cookie errors.
+            # We let it print its own message and exit cleanly — no traceback.
+            # (raw regeneration can't run without a session anyway since we have
+            # no new data, but we still try with whatever progress was saved.)
+            if morning_progress["entries"]:
+                print()
+                print("[morning] Attempting raw regeneration from existing progress...")
+                write_raw_markdown(morning_progress["entries"])
+            sys.exit(1)
+        try:
+            user_id = get_user_id(session)
+            query_id = find_query_id(session)
+            tweetdetail_qid = find_tweetdetail_query_id(session)
+            print(f"[user]  ID: {user_id}")
+            print(f"[query] Bookmarks: {query_id}")
+            print(f"[query] TweetDetail: {tweetdetail_qid or 'NOT FOUND (replies disabled)'}\n")
+            scrape(session, query_id, user_id, morning_progress, tweetdetail_qid=tweetdetail_qid)
+            scrape_ok = True
+        except KeyboardInterrupt:
+            print("\n[morning] Interrupted. Saving progress...")
+            save_progress(morning_progress)
+            write_markdown(morning_progress["entries"])
+        except Exception as e:
+            print(f"\n[morning] Scrape error: {e}")
+            print("[morning] Will still attempt raw regeneration from saved progress.")
+        # Step 2: regenerate raw regardless of scrape outcome.
+        if morning_progress["entries"]:
+            print()
+            if scrape_ok:
+                print("[morning] Scrape complete. Regenerating bookmarks_raw.md...")
+            else:
+                print("[morning] Regenerating bookmarks_raw.md from existing progress...")
+            write_raw_markdown(morning_progress["entries"])
+            print("[morning] Done.")
+        else:
+            print("[morning] No entries in progress — bookmarks_raw.md not written.")
         return
 
     if args.demo:
