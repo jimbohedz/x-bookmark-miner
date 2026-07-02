@@ -197,6 +197,7 @@ python bookmark_scraper.py --demo              # Preview output format without c
 
 # Agent-native (zero API keys)
 python bookmark_scraper.py --raw               # Write bookmarks_raw.md for your AI to personalize
+python bookmark_scraper.py --morning           # Scrape new bookmarks, then refresh bookmarks_raw.md (scheduled runs)
 
 # Enrich existing data
 python bookmark_scraper.py --rescrape-articles  # Re-fetch article links that returned empty
@@ -222,6 +223,7 @@ python bookmark_scraper.py --unschedule         # Remove the daily schedule
 |---|---|---|---|
 | *(none)* | xcookies.json | bookmarks_output.md | Scrape / resume |
 | `--raw` | existing scrape | bookmarks_raw.md | Uncategorized, agent-native. Run default scrape first. |
+| `--morning` | xcookies.json | bookmarks_output.md + bookmarks_raw.md | Scrape + raw refresh in one step. Designed for scheduled runs. |
 | `--rebuild` | existing scrape | bookmarks_output.md | Instant rebuild from saved data |
 | `--view` | GEMINI_API_KEY | bookmarks_output.md | Shortcut for --rebuild --gemini |
 | `--gemini` | GEMINI_API_KEY | bookmarks_output.md | AI categorization via Gemini |
@@ -263,7 +265,7 @@ py bookmark_scraper.py --schedule 07:30
 py bookmark_scraper.py --unschedule
 ```
 
-> Note: `--raw` requires an existing scrape (`bookmarks_progress.json`). Run the default scrape at least once first. After that, the scheduled run refreshes from your latest saved data — it's instant.
+> `--morning` runs the full scrape first (picks up new bookmarks), then regenerates `bookmarks_raw.md`. If cookies are missing or invalid it prints a clean error and exits. If the scrape hits a network error mid-way, it still regenerates from whatever progress was saved.
 
 **Manual fallback (if the one-liner doesn't work for you)**
 
@@ -275,7 +277,7 @@ py bookmark_scraper.py --unschedule
 3. Trigger: Daily, 10:00 AM
 4. Action: Start a program
    - Program: `C:\Python311\python.exe` (find yours: run `where py`)
-   - Arguments: `bookmark_scraper.py --raw`
+   - Arguments: `bookmark_scraper.py --morning`
    - Start in: `C:\path\to\x-bookmark-miner`
 5. Finish.
 
@@ -295,7 +297,7 @@ Create `~/Library/LaunchAgents/com.xbookmarkminer.daily.plist`:
   <array>
     <string>/usr/bin/python3</string>
     <string>/path/to/x-bookmark-miner/bookmark_scraper.py</string>
-    <string>--raw</string>
+    <string>--morning</string>
   </array>
   <key>StartCalendarInterval</key>
   <dict><key>Hour</key><integer>10</integer><key>Minute</key><integer>0</integer></dict>
@@ -313,7 +315,7 @@ Then: `launchctl load ~/Library/LaunchAgents/com.xbookmarkminer.daily.plist`
 ```bash
 crontab -e
 # Add this line (runs at 10am daily):
-0 10 * * * /path/to/python3 /path/to/bookmark_scraper.py --raw # XBookmarkMiner
+0 10 * * * /path/to/python3 /path/to/bookmark_scraper.py --morning # XBookmarkMiner
 ```
 
 </details>
@@ -569,6 +571,14 @@ PRs welcome. Key areas where help is useful:
 - **Bug reports** — open an issue with your Python version, OS, and `--debug` output
 
 Please do not submit PRs that add external API dependencies to the core scrape path. The zero-key default is a feature.
+
+---
+
+## Support
+
+If this tool saves you time, donations are appreciated:
+
+donation SOL: `G26r2MDdwY4JDgMmg9BfmchjMgQU1rUHfGtDD5txzxc8`
 
 ---
 
