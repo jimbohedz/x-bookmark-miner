@@ -14,6 +14,7 @@ USAGE:
   python bookmark_scraper.py --rescrape-articles  -- re-fetch articles that returned empty
   python bookmark_scraper.py --rescrape-replies   -- backfill author thread replies
   python bookmark_scraper.py --transcribe-videos  -- transcribe X native videos (GPU or CPU)
+     Optional: --transcribe-limit N --transcribe-max-seconds N --retry-transcribe-skips
   python bookmark_scraper.py --vision             -- analyze images via local Ollama vision model
   python bookmark_scraper.py --search "query"     -- semantic search bookmarks by meaning
   python bookmark_scraper.py --raw                -- output bookmarks_raw.md (uncategorized,
@@ -85,6 +86,13 @@ def _load_config() -> dict:
         "gemini_model": "gemini-2.0-flash",
         "whisper_model": "medium",
         "whisper_device": "auto",    # "auto" | "cuda" | "cpu"
+        "transcribe_limit": 0,        # 0 = no per-run limit
+        "transcribe_max_seconds": 1800,  # 0 = no duration cap
+        "transcribe_metadata_timeout": 60,
+        "transcribe_download_timeout": 600,
+        "transcribe_socket_timeout": 30,
+        "transcribe_retries": 1,
+        "transcribe_fragment_retries": 1,
         "ollama_url": "http://localhost:11434",
         "vision_model": "gemma3:12b",
         "delay_seconds": 1.5,
@@ -134,6 +142,14 @@ VISION_MODEL     = CONFIG["vision_model"]
 DELAY_S          = float(CONFIG["delay_seconds"])
 MAX_BOOKMARKS    = int(CONFIG["max_bookmarks"])
 PER_PAGE         = 20
+TERMINAL_TRANSCRIBE_PREFIXES = ("no_audio", "no_video", "duration_too_long", "empty_transcript")
+
+
+def _int_config(key: str, default: int, minimum: int = 0) -> int:
+    try:
+        return max(minimum, int(CONFIG.get(key, default)))
+    except (TypeError, ValueError):
+        return default
 
 # ─────────────────────────────────────────
 #  X API CONSTANTS (public — not secrets)
@@ -581,13 +597,23 @@ def _detect_whisper_device() -> str:
 
 
 def transcribe_x_video(tweet_url: str, whisper_model=None) -> tuple:
-    """Download audio from an X video and transcribe with faster-whisper (GPU or CPU)."""
+    """Download audio from an X video and transcribe with faster-whisper (GPU or CPU).
+
+    Returns (transcript_text, whisper_model, status). Status is "ok" for
+    transcripts, or a typed skip/failure such as no_audio/no_video.
+    """
     import subprocess
     import tempfile
 
     tmp_dir = tempfile.gettempdir()
     url_hash = str(abs(hash(tweet_url)))[:12]
     audio_path = os.path.join(tmp_dir, f"bm_audio_{url_hash}")
+    socket_timeout = _int_config("transcribe_socket_timeout", 30, minimum=5)
+    retries = _int_config("transcribe_retries", 1)
+    fragment_retries = _int_config("transcribe_fragment_retries", 1)
+    download_timeout = _int_config("transcribe_download_timeout", 600, minimum=30)
+    metadata_timeout = _int_config("transcribe_metadata_timeout", 60, minimum=5)
+    max_seconds = _int_config("transcribe_max_seconds", 0)
 
     try:
         try:
@@ -614,9 +640,50 @@ def transcribe_x_video(tweet_url: str, whisper_model=None) -> tuple:
             except Exception:
                 cookies_txt = None
 
+        if max_seconds > 0:
+            meta_cmd = [
+                sys.executable, "-m", "yt_dlp",
+                "--no-warnings", "-q", "--no-playlist",
+                "--socket-timeout", str(socket_timeout),
+                "--retries", str(retries),
+                "--fragment-retries", str(fragment_retries),
+                "--dump-single-json", "--skip-download",
+                tweet_url,
+            ]
+            if cookies_txt:
+                meta_cmd.insert(4, "--cookies")
+                meta_cmd.insert(5, cookies_txt)
+            dbg("yt-dlp metadata cmd", " ".join(meta_cmd))
+            meta_result = subprocess.run(
+                meta_cmd,
+                capture_output=True,
+                text=True,
+                timeout=metadata_timeout,
+            )
+            if meta_result.returncode == 0 and meta_result.stdout.strip():
+                try:
+                    meta = json.loads(meta_result.stdout)
+                    duration = meta.get("duration")
+                    if duration is None and isinstance(meta.get("entries"), list):
+                        for meta_entry in meta["entries"]:
+                            if isinstance(meta_entry, dict) and meta_entry.get("duration") is not None:
+                                duration = meta_entry.get("duration")
+                                break
+                    if duration is not None and float(duration) > max_seconds:
+                        status = f"duration_too_long:{int(float(duration))}s"
+                        dbg("yt-dlp metadata status", status)
+                        return "", whisper_model, status
+                except (TypeError, ValueError, json.JSONDecodeError) as e:
+                    dbg("yt-dlp metadata parse failed", str(e))
+            elif meta_result.returncode != 0:
+                dbg("yt-dlp metadata stderr", meta_result.stderr[:500])
+
         cmd = [
             sys.executable, "-m", "yt_dlp",
-            "--no-warnings", "-q",
+            "--no-warnings", "-q", "--no-playlist",
+            "--socket-timeout", str(socket_timeout),
+            "--retries", str(retries),
+            "--fragment-retries", str(fragment_retries),
             "-f", "bestaudio/best",
             "-o", audio_path + ".%(ext)s",
             tweet_url,
@@ -625,9 +692,12 @@ def transcribe_x_video(tweet_url: str, whisper_model=None) -> tuple:
             cmd.insert(4, "--cookies")
             cmd.insert(5, cookies_txt)
 
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=download_timeout)
         if result.returncode != 0:
-            return "", whisper_model
+            dbg("yt-dlp stderr", result.stderr[:500])
+            if "No video could be found" in (result.stderr or ""):
+                return "", whisper_model, "no_video"
+            return "", whisper_model, "download_failed"
 
         raw_path = None
         for f in os.listdir(tmp_dir):
@@ -635,7 +705,7 @@ def transcribe_x_video(tweet_url: str, whisper_model=None) -> tuple:
                 raw_path = os.path.join(tmp_dir, f)
                 break
         if not raw_path:
-            return "", whisper_model
+            return "", whisper_model, "no_media_downloaded"
 
         wav_path = audio_path + ".wav"
         if not raw_path.endswith(".wav"):
@@ -646,7 +716,15 @@ def transcribe_x_video(tweet_url: str, whisper_model=None) -> tuple:
             ]
             conv = subprocess.run(conv_cmd, capture_output=True, text=True, timeout=120)
             if conv.returncode != 0:
-                return "", whisper_model
+                dbg("ffmpeg stderr", conv.stderr[:500])
+                ffmpeg_error = conv.stderr or ""
+                if (
+                    "Output file does not contain any stream" in ffmpeg_error
+                    or "Stream map" in ffmpeg_error
+                    or "matches no streams" in ffmpeg_error
+                ):
+                    return "", whisper_model, "no_audio"
+                return "", whisper_model, "ffmpeg_failed"
             try:
                 os.remove(raw_path)
             except OSError:
@@ -667,14 +745,16 @@ def transcribe_x_video(tweet_url: str, whisper_model=None) -> tuple:
         dbg("whisper language", f"{info.language} (prob={info.language_probability:.2f})")
 
         transcript = " ".join(seg.text.strip() for seg in segments).strip()
+        if not transcript:
+            return "", whisper_model, "empty_transcript"
         if len(transcript) > 50000:
             transcript = transcript[:50000] + "\n\n... [truncated at 50K chars]"
 
-        return transcript, whisper_model
+        return transcript, whisper_model, "ok"
 
     except Exception as e:
         dbg("transcribe_x_video error", str(e))
-        return "", whisper_model
+        return "", whisper_model, f"exception:{type(e).__name__}"
     finally:
         for f in os.listdir(tmp_dir):
             if f.startswith(f"bm_audio_{url_hash}"):
@@ -1427,13 +1507,16 @@ def scrape(session, query_id, user_id, progress, tweetdetail_qid=None) -> list:
                 full_text_with_thread += "\n\n--- THREAD ---\n\n" + "\n\n".join(thread_parts)
 
             video_transcript = ""
+            video_transcript_status = ""
             if t["is_video"]:
                 try:
                     from faster_whisper import WhisperModel  # noqa: F811
-                    transcript, _whisper_model = transcribe_x_video(t["url"], _whisper_model)
+                    transcript, _whisper_model, transcribe_status = transcribe_x_video(t["url"], _whisper_model)
                     if transcript:
                         video_transcript = transcript
                         full_text_with_thread += "\n\n--- VIDEO TRANSCRIPT ---\n\n" + transcript
+                    else:
+                        video_transcript_status = transcribe_status
                 except ImportError:
                     pass
                 except Exception as e:
@@ -1460,6 +1543,11 @@ def scrape(session, query_id, user_id, progress, tweetdetail_qid=None) -> list:
             }
             if video_transcript:
                 entry["video_transcript"] = video_transcript
+                entry["video_transcript_status"] = "ok"
+                entry["video_transcript_checked_at"] = datetime.utcnow().isoformat() + "Z"
+            elif video_transcript_status:
+                entry["video_transcript_status"] = video_transcript_status
+                entry["video_transcript_checked_at"] = datetime.utcnow().isoformat() + "Z"
 
             entries.append(entry)
             processed_ids.add(t["id"])
@@ -1570,14 +1658,28 @@ def rescrape_replies(session, tweetdetail_qid: str, progress: dict) -> tuple:
     return progress, n_tried, n_found
 
 
-def transcribe_videos(progress: dict) -> tuple:
+def _is_terminal_transcribe_status(status: str) -> bool:
+    return any(str(status or "").startswith(prefix) for prefix in TERMINAL_TRANSCRIBE_PREFIXES)
+
+
+def _needs_video_transcription(entry: dict, retry_skips: bool = False) -> bool:
+    if not entry.get("is_video") or entry.get("video_transcript"):
+        return False
+    status = entry.get("video_transcript_status", "")
+    if retry_skips:
+        return True
+    return not _is_terminal_transcribe_status(status)
+
+
+def transcribe_videos(progress: dict, retry_skips: bool = False) -> tuple:
     entries = progress["entries"]
     n_tried = n_transcribed = 0
     whisper_model = None
+    limit = _int_config("transcribe_limit", 0)
     print("\n[transcribe] Scanning for untranscribed X videos...\n")
 
     for i, entry in enumerate(entries):
-        if not entry.get("is_video") or entry.get("video_transcript"):
+        if not _needs_video_transcription(entry, retry_skips=retry_skips):
             continue
         tweet_url = entry.get("url", "")
         if not tweet_url:
@@ -1586,25 +1688,30 @@ def transcribe_videos(progress: dict) -> tuple:
         n_tried += 1
         print(f"  [{n_tried:03d}] @{entry.get('author', '?'):<22} ", end="", flush=True)
 
-        transcript, whisper_model = transcribe_x_video(tweet_url, whisper_model)
+        transcript, whisper_model, transcribe_status = transcribe_x_video(tweet_url, whisper_model)
         if transcript:
             entry["video_transcript"] = transcript
+            entry["video_transcript_status"] = "ok"
+            entry["video_transcript_checked_at"] = datetime.utcnow().isoformat() + "Z"
             n_transcribed += 1
             full_text = entry.get("full_text", "")
             if "\n\n--- VIDEO TRANSCRIPT ---\n\n" not in full_text:
                 entry["full_text"] = full_text + "\n\n--- VIDEO TRANSCRIPT ---\n\n" + transcript
             print(f"OK {len(transcript)} chars")
         else:
-            print("-- failed")
+            entry["video_transcript_status"] = transcribe_status
+            entry["video_transcript_checked_at"] = datetime.utcnow().isoformat() + "Z"
+            print(f"-- {transcribe_status}")
 
         entries[i] = entry
-        if n_tried % 5 == 0:
-            progress["entries"] = entries
-            save_progress(progress)
+        progress["entries"] = entries
+        save_progress(progress)
+        if limit and n_tried >= limit:
+            break
         time.sleep(1.0)
 
     progress["entries"] = entries
-    return progress, n_tried, n_transcribed
+    return progress, n_tried, n_transcribed, whisper_model
 
 
 # ─────────────────────────────────────────
@@ -2307,6 +2414,18 @@ Add --debug for verbose output.
                         help="Backfill author thread replies for existing entries")
     parser.add_argument("--transcribe-videos", action="store_true", dest="transcribe_videos",
                         help="Transcribe X native videos (GPU if available, CPU fallback)")
+    parser.add_argument("--transcribe-limit", type=int, default=None,
+                        help="Maximum X videos to attempt in this run (default: config/0 = no limit)")
+    parser.add_argument("--transcribe-max-seconds", type=int, default=None,
+                        help="Skip X videos longer than this duration (default: config/1800; use 0 for no cap)")
+    parser.add_argument("--transcribe-download-timeout", type=int, default=None,
+                        help="Seconds before one X video download attempt times out")
+    parser.add_argument("--transcribe-metadata-timeout", type=int, default=None,
+                        help="Seconds before one X video metadata probe times out")
+    parser.add_argument("--transcribe-socket-timeout", type=int, default=None,
+                        help="yt-dlp socket timeout for X video requests")
+    parser.add_argument("--retry-transcribe-skips", action="store_true",
+                        help="Retry videos previously marked no_audio/no_video/empty/too long")
     parser.add_argument("--vision", action="store_true",
                         help="Analyze images via local Ollama vision model")
     parser.add_argument("--search", metavar="QUERY", nargs="?", const="",
@@ -2349,6 +2468,16 @@ Add --debug for verbose output.
     args = parser.parse_args()
     global DEBUG
     DEBUG = args.debug
+    for arg_name, config_key in (
+        ("transcribe_limit", "transcribe_limit"),
+        ("transcribe_max_seconds", "transcribe_max_seconds"),
+        ("transcribe_download_timeout", "transcribe_download_timeout"),
+        ("transcribe_metadata_timeout", "transcribe_metadata_timeout"),
+        ("transcribe_socket_timeout", "transcribe_socket_timeout"),
+    ):
+        value = getattr(args, arg_name, None)
+        if value is not None:
+            CONFIG[config_key] = value
 
     # ── Scheduling commands (no cookies/progress file needed) ──
     if args.schedule_status:
@@ -2514,13 +2643,23 @@ Add --debug for verbose output.
             return
         with open(PROGRESS_FILE, encoding="utf-8") as f:
             data = json.load(f)
-        n_videos = sum(1 for e in data["entries"] if e.get("is_video") and not e.get("video_transcript"))
+        n_videos = sum(1 for e in data["entries"] if _needs_video_transcription(e, retry_skips=args.retry_transcribe_skips))
         if n_videos == 0:
             print("[transcribe-videos] No untranscribed videos found.")
             return
         print(f"[transcribe-videos] {n_videos} videos to transcribe.\n")
+        max_seconds = _int_config("transcribe_max_seconds", 0)
+        limit = _int_config("transcribe_limit", 0)
+        if max_seconds:
+            print(f"[transcribe-videos] Skipping videos longer than {max_seconds}s.")
+        if limit:
+            print(f"[transcribe-videos] Limit: {limit} attempt(s).")
+        whisper_model = None
         try:
-            data, n_tried, n_transcribed = transcribe_videos(data)
+            data, n_tried, n_transcribed, whisper_model = transcribe_videos(
+                data,
+                retry_skips=args.retry_transcribe_skips,
+            )
         except KeyboardInterrupt:
             print("\n[paused] Progress saved.")
             save_progress(data)
@@ -2529,6 +2668,12 @@ Add --debug for verbose output.
         save_progress(data)
         write_markdown(data["entries"])
         print(f"\n[transcribe-videos] Done. {n_transcribed}/{n_tried} videos transcribed.")
+        if whisper_model is not None:
+            # ctranslate2/CUDA can return a false nonzero exit during Windows
+            # teardown. At this point progress and markdown are already durable.
+            sys.stdout.flush()
+            sys.stderr.flush()
+            os._exit(0)
         return
 
     if args.rebuild or args.view:

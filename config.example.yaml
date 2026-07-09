@@ -29,6 +29,16 @@ whisper_model: medium
 # CPU works fine but is slower — medium model on CPU takes ~5-10x longer
 whisper_device: auto
 
+# X native video transcription safety controls
+# transcribe_max_seconds: 0 means no cap. Use 1800 to skip videos longer than 30 minutes.
+transcribe_max_seconds: 1800
+transcribe_limit: 0
+transcribe_metadata_timeout: 60
+transcribe_download_timeout: 600
+transcribe_socket_timeout: 30
+transcribe_retries: 1
+transcribe_fragment_retries: 1
+
 # Ollama server URL for vision analysis and semantic search
 # Install Ollama from: https://ollama.com
 ollama_url: http://localhost:11434

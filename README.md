@@ -203,6 +203,7 @@ python bookmark_scraper.py --morning           # Scrape new bookmarks, then refr
 python bookmark_scraper.py --rescrape-articles  # Re-fetch article links that returned empty
 python bookmark_scraper.py --rescrape-replies   # Backfill author thread replies
 python bookmark_scraper.py --transcribe-videos  # Transcribe X native videos
+python bookmark_scraper.py --transcribe-videos --transcribe-max-seconds 1800  # Skip long videos
 python bookmark_scraper.py --vision             # Analyze images via local Ollama vision model
 python bookmark_scraper.py --search "query"     # Semantic search by meaning
 
@@ -230,7 +231,10 @@ python bookmark_scraper.py --unschedule         # Remove the daily schedule
 | `--fix-unsure` | GEMINI_API_KEY | bookmarks_output.md | Re-categorize low-confidence only |
 | `--rescrape-articles` | existing scrape | updates progress | Re-fetch empty article links |
 | `--rescrape-replies` | existing scrape | updates progress | Backfill author threads |
-| `--transcribe-videos` | faster-whisper, yt-dlp | updates progress | GPU recommended |
+| `--transcribe-videos` | faster-whisper, yt-dlp | updates progress | GPU recommended; records no-audio/no-video/too-long statuses |
+| `--transcribe-max-seconds N` | with `--transcribe-videos` | updates progress | Skip long videos instead of blocking the queue. Default is 1800; use 0 for no cap |
+| `--transcribe-limit N` | with `--transcribe-videos` | updates progress | Batch transcription safely |
+| `--retry-transcribe-skips` | with `--transcribe-videos` | updates progress | Retry videos previously marked no-audio/no-video/empty/too long |
 | `--vision` | Ollama running | updates progress | Requires vision model (e.g. gemma3:12b) |
 | `--search "query"` | Ollama + nomic-embed | terminal output | Semantic search |
 | `--demo` | nothing | demo_output.md | Safe preview, no cookies |
@@ -361,6 +365,8 @@ cookies_path: xcookies.json          # path to your cookie file
 output_path: bookmarks_output.md     # where to write the knowledge base
 whisper_model: medium                # tiny / base / small / medium / large-v3
 whisper_device: auto                 # auto (detects GPU/CPU) | cuda | cpu
+transcribe_max_seconds: 1800         # skip videos longer than 30 min (0 = no cap)
+transcribe_limit: 0                  # max videos per run (0 = no limit)
 ollama_url: http://localhost:11434   # local Ollama server
 vision_model: gemma3:12b             # for image analysis
 delay_seconds: 1.5                   # polite delay between API calls
@@ -544,7 +550,7 @@ Install trafilatura for better extraction: `pip install trafilatura`. For JS-ren
 You need to run `python bookmark_scraper.py` first (without `--raw`) to scrape your bookmarks. Once you have `bookmarks_progress.json`, then run `--raw`.
 
 **Slow transcription**
-`--transcribe-videos` on CPU with `medium` model is slow (~5-10x realtime). Use `whisper_model: tiny` or `whisper_model: base` in `config.yaml` for faster CPU transcription. Or get a GPU.
+`--transcribe-videos` on CPU with `medium` model is slow (~5-10x realtime). Use `whisper_model: tiny` or `whisper_model: base` in `config.yaml` for faster CPU transcription. Use `--transcribe-max-seconds 1800` to skip long courses/documentaries so short clips keep processing. The miner saves after every video attempt and marks terminal cases (`no_audio`, `no_video`, `empty_transcript`, `duration_too_long`) so future runs do not get stuck retrying them.
 
 **Cookie-Editor not showing Export as JSON**
 Make sure you selected "JSON" format (not "Netscape"). The exported file should start with `[{`.
